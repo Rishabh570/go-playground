@@ -27,7 +27,9 @@ var encryptCmd = &cobra.Command{
 			fmt.Printf("Error encrypting data: %v\n", err)
 			return
 		}
-		fmt.Printf("Ciphertext received: %x\n", string(ciphertext))
+		fmt.Println("======================================================================================================")
+		fmt.Printf("Ciphertext: %x\n", string(ciphertext))
+		fmt.Println("======================================================================================================")
 		fmt.Printf("Encryption time: %v\n", elapsed)
 	},
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/rishabh570/aesctr/internal/blockcipher"
 	"github.com/spf13/cobra"
@@ -22,12 +23,17 @@ var decryptCmd = &cobra.Command{
 
 		ciphertextStr, _ := decodeIfHex(ciphertext)
 		keyConverted, _ := decodeIfHex(key)
+		startTime := time.Now()
 		plaintext, err := blockcipher.Decrypt(ciphertextStr, keyConverted)
+		elapsed := time.Since(startTime)
 		if err != nil {
 			fmt.Printf("Error decrypting data: %v\n", err)
 			return
 		}
-		fmt.Printf("Recovered original text: %x\n", plaintext)
+		fmt.Println("======================================================================================================")
+		fmt.Printf("Recovered original text: %s\n", string(plaintext))
+		fmt.Println("======================================================================================================")
+		fmt.Printf("Decryption time: %v\n", elapsed)
 	},
 }
 
