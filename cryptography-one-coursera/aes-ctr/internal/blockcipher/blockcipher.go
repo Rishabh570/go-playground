@@ -4,10 +4,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
+	"runtime"
+	"sync"
 )
 
 // Encrypt encrypts the given plaintext using AES in CBC mode.
-func Encrypt(plaintext, key []byte) ([]byte, error) {
+func EncryptConcurrent(plaintext, key []byte) ([]byte, error) {
+	fmt.Printf("Encrypt received plaintext (len: %d): %x\n", len(plaintext), plaintext)
 	// 1. Initialize cipher block
 	blockcipher, err := InitCipher(key)
 	if err != nil {
@@ -16,92 +19,85 @@ func Encrypt(plaintext, key []byte) ([]byte, error) {
 	blockSize := blockcipher.BlockSize()
 	fmt.Printf("Block size: %d\n", blockSize)
 
-	// 2. Generate an Initialization Vector (IV) to use as a 'previous ciphertext' for the first block
+	// 2. Generate an Initialization Vector (IV)
 	// IV lenght is exactly equal to block size (for AES, it is 16 bytes)
-	// IV is NOT secret, but MUST BE unique to ensure randomness for the same plaintext input
+	// IV is NOT secret, but MUST BE unique to ensure randomness for the same plaintext input (PRF theory)
 	counterBlock := generateIncrementableNonce()
-
 	fmt.Printf("counter block (hex): %x\n", counterBlock)
 
 	// 4. Split plaintext into blocks
 	blocks := SplitIntoBlocks(plaintext, blockSize)
 	fmt.Printf("Len of blocks: %d\n", len(blocks))
-	fmt.Printf("len of plaintext: %d\n", len(plaintext))
 
 	// resulting ciphertext
 	ciphertext := make([]byte, len(plaintext)+blockSize)
-	// Copy the IV to the beginning of the ciphertext
+	// Copy the IV to the beginning of the ciphertext, needed for decryption
 	copy(ciphertext[:blockSize], counterBlock)
 
 	fmt.Printf("initialized ciphertext len: %d\n", len(ciphertext))
 
 	// define wait group
-	// var wg sync.WaitGroup
+	var wg sync.WaitGroup
 
-	// cipherCh := make(chan []byte, len(blocks))
+	// Calculate blocks per worker
+	numWorkers := runtime.NumCPU()
+	numBlocks := (len(plaintext) + blockSize - 1) / blockSize
+	blocksPerWorker := (numBlocks + numWorkers - 1) / numWorkers
 
-	for i, block := range blocks {
-		currentBlock := block
+	fmt.Printf("Number of workers: %d\n", numWorkers)
+	fmt.Printf("Blocks per worker: %d\n", blocksPerWorker)
 
-		fmt.Printf("Block %d - Current block (hex): %x, counter: %x\n", i, currentBlock, counterBlock)
+	// We want to process blocksPerWorker blocks per goroutine
+	// We process blocksPerWorker sequentially in each goroutine, since it's a CPU-bound task
+	// We run numWorksers goroutines, each processing blocksPerWorker blocks sequentially
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
 
-		// wg.Add(1)
-		// go func(ind int, currentBlock []byte, counterBlock []byte) {
-		// var result []byte
-		// defer wg.Done()
+		go func(i int) {
+			defer wg.Done()
 
-		// fmt.Printf("Processing block %d, counter: %x\n", ind, counterBlock)
+			// Global start and end index for blocks
+			blocksStartInd := i * blocksPerWorker
+			blocksEndInd := min((i+1)*blocksPerWorker, numBlocks)
 
-		keystream := make([]byte, blockSize)
-		// need to increment the prevCiphertext for every encryption round
-		blockcipher.Encrypt(keystream, counterBlock)
+			if blocksStartInd >= numBlocks {
+				return
+			}
 
-		// st := len(currentBlock)
-		// fmt.Printf("st: %d, keystream len: %d\n", st, len(keystream))
-		// keystreamModified := keystream[:st]
-		// fmt.Printf("Keystream (hex): %x\n", len(keystreamModified))
-		xoredBlock, err := XorBytes(currentBlock, keystream)
-		if err != nil {
-			fmt.Printf("XOR error: %v\n", err)
-			// return
-			// return nil, fmt.Errorf("encrypt: %w", err)
-		}
-		fmt.Printf("XORed block: %x\n", xoredBlock)
+			// Create a local counter for this goroutine
+			// makes it easy to manage the counter state for each goroutine
+			localCounter := make([]byte, blockSize)
+			copy(localCounter, counterBlock)
+			// Advance counter to starting position for this goroutine's first block
+			for j := 0; j < blocksStartInd; j++ {
+				localCounter = incrementCounter(localCounter)
+			}
 
-		// assign xoredBlock to the ciphertext
-		startingIndex := blockSize + (i * blockSize)
-		endingIndex := startingIndex + len(xoredBlock)
-		fmt.Printf("Starting index: %d, Ending index: %d\n", startingIndex, endingIndex)
-		copy(ciphertext[startingIndex:endingIndex], xoredBlock)
-		// cipherCh <- xoredBlock
+			for j := blocksStartInd; j < blocksEndInd; j++ {
+				currBlock := blocks[j]
+				fmt.Printf("Block %d - Current block (hex): %x, counter: %x\n", j, currBlock, localCounter)
 
-		// }(i, currentBlock, counterBlock)
+				keystream := make([]byte, blockSize)
+				blockcipher.Encrypt(keystream, localCounter)
 
-		// increment counter
-		counterBlock = incrementCounter(counterBlock)
+				xoredBlock, err := XorBytes(currBlock, keystream)
+				if err != nil {
+					fmt.Printf("XOR error: %v\n", err)
+					return
+				}
+				fmt.Printf("XORed block: %x\n", xoredBlock)
+
+				// assign xoredBlock to the ciphertext
+				startingIndex := blockSize + (j * blockSize)
+				endingIndex := startingIndex + len(xoredBlock)
+				copy(ciphertext[startingIndex:endingIndex], xoredBlock)
+
+				localCounter = incrementCounter(localCounter)
+			}
+		}(i)
 	}
 
-	// wg.Wait()
-
-	// TODO: fetch from channel and concatenate to form ciphertext
-	// read all values from buffered channel
-	// close(cipherCh)
-	// for i := 0; i < len(blocks); i++ {
-	// 	select {
-	// 	case xoredBlock, ok := <-cipherCh:
-	// 		if !ok {
-	// 			fmt.Println("Channel closed")
-	// 			break
-	// 		}
-	// 		fmt.Printf("XORed block from channel: %x\n", xoredBlock)
-	// 		// startingIndex := blockSize + (i * blockSize)
-	// 		// endingIndex := startingIndex + blockSize
-	// 		// copy(ciphertext[startingIndex:endingIndex], xoredBlock)
-	// 		ciphertext = append(ciphertext, xoredBlock...)
-	// 	default:
-	// 		fmt.Println("No more data in channel")
-	// 	}
-	// }
+	wg.Wait()
 
 	fmt.Println("Encryption complete")
 	fmt.Printf("Ciphertext: %x\n", ciphertext)

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/rishabh570/aesctr/internal/blockcipher"
 	"github.com/spf13/cobra"
@@ -18,12 +19,16 @@ var encryptCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("Encrypting data: %s\n", plaintext)
 		fmt.Printf("Using key: %s\n", key)
-		ciphertext, err := blockcipher.Encrypt([]byte(plaintext), []byte(key))
+
+		startTime := time.Now()
+		ciphertext, err := blockcipher.EncryptConcurrent([]byte(plaintext), []byte(key))
+		elapsed := time.Since(startTime)
 		if err != nil {
 			fmt.Printf("Error encrypting data: %v\n", err)
 			return
 		}
 		fmt.Printf("Ciphertext received: %x\n", string(ciphertext))
+		fmt.Printf("Encryption time: %v\n", elapsed)
 	},
 }
 
